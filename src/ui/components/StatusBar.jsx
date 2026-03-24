@@ -97,6 +97,17 @@ export function StatusBar({ activeTab, activeStage }) {
     return () => window.removeEventListener('zustand-fix-status-changed', handleSync);
   }, [state.stage2Data, dispatch]);
 
+  React.useEffect(() => {
+      const handleUndoSync = () => {
+          // Use the current Zustand state directly to override Stage 2
+          const currentZustandData = useStore.getState().dataTable;
+          dispatch({ type: "SET_STAGE_2_DATA", payload: currentZustandData });
+          dispatch({ type: "ADD_LOG", payload: { type: "Info", stage: "UNDO", message: "Undo performed. State restored." } });
+      };
+      window.addEventListener('zustand-undo', handleUndoSync);
+      return () => window.removeEventListener('zustand-undo', handleUndoSync);
+  }, [dispatch]);
+
   const handleSmartFix = () => {
     dispatch({ type: "SET_SMART_FIX_STATUS", status: "running" });
     const logger = createLogger();
@@ -413,7 +424,8 @@ export function StatusBar({ activeTab, activeStage }) {
   };
 
   const d = new Date();
-  const verString = `Ver ${d.getDate().toString().padStart(2, '0')}-${(d.getMonth()+1).toString().padStart(2, '0')}-${d.getFullYear()} (2)`;
+  const timeStr = `${d.getHours().toString().padStart(2, '0')}.${d.getMinutes().toString().padStart(2, '0')}`;
+  const verString = `Ver 24-03-2026 (1) ${timeStr}`;
 
   const handleExecute = () => {
       setShowModal(false);

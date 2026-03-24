@@ -135,6 +135,53 @@ function reducer(state, action) {
       return { ...state, stage3Data: action.payload };
     case "SET_CONFIG":
       return { ...state, config: { ...state.config, ...action.payload } };
+    case "DELETE_ELEMENTS": {
+      const { rowIndices } = action.payload;
+      const filtered = state.stage2Data.filter(r => !rowIndices.includes(r._rowIndex));
+      const reindexed = filtered.map((r, i) => ({ ...r, _rowIndex: i + 1 }));
+      return { ...state, stage2Data: reindexed };
+    }
+    case "BREAK_PIPE": {
+      const { rowIndex, rowA, rowB } = action.payload;
+      let newTable = [];
+      state.stage2Data.forEach(r => {
+          if (r._rowIndex === rowIndex) {
+              newTable.push(rowA, rowB);
+          } else {
+              newTable.push(r);
+          }
+      });
+      const reindexed = newTable.map((r, i) => ({ ...r, _rowIndex: i + 1 }));
+      return { ...state, stage2Data: reindexed };
+    }
+    case "INSERT_SUPPORT": {
+      const { rowIndex, supportRow } = action.payload;
+      let newTable = [];
+      state.stage2Data.forEach(r => {
+          newTable.push(r);
+          if (r._rowIndex === rowIndex && supportRow) {
+              newTable.push(supportRow);
+          }
+      });
+      const reindexed = newTable.map((r, i) => ({ ...r, _rowIndex: i + 1 }));
+      return { ...state, stage2Data: reindexed };
+    }
+    case "BATCH_UPDATE_SUPPORT_ATTRS": {
+      const { rowIndices, attrs } = action.payload;
+      const updated = state.stage2Data.map(r => {
+          if (rowIndices.includes(r._rowIndex) && (r.type || '').toUpperCase() === 'SUPPORT') {
+              return { ...r, ...attrs };
+          }
+          return r;
+      });
+      return { ...state, stage2Data: updated };
+    }
+    case "APPLY_GAP_FIX": {
+      const { updatedTable } = action.payload;
+      // Assume already reindexed by the engine, but double-check to enforce 1-based index
+      const reindexed = updatedTable.map((r, i) => ({ ...r, _rowIndex: i + 1 }));
+      return { ...state, stage2Data: reindexed };
+    }
     case "ADD_LOG":
       return { ...state, log: [...state.log, action.payload] };
     case "CLEAR_LOG":

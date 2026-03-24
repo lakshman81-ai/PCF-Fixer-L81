@@ -7,6 +7,20 @@ import { useAppContext } from '../../store/AppContext';
 import { applyFixes } from '../../engine/FixApplicator';
 import { createLogger } from '../../utils/Logger';
 
+import { HoverTooltip } from '../components/HoverTooltip';
+import { CanvasToolbar } from '../components/CanvasToolbar';
+import { SideInspector } from '../components/SideInspector';
+import { LogDrawer } from '../components/LogDrawer';
+import { SceneHealthHUD } from '../components/SceneHealthHUD';
+import { SupportPropertyPanel } from '../components/SupportPropertyPanel';
+
+import { EndpointSnapLayer } from '../layers/EndpointSnapLayer';
+import { GapRadarLayer } from '../layers/GapRadarLayer';
+import { MeasureTool, MeasurePanelOverlay } from '../layers/MeasureTool';
+import { BreakPipeLayer } from '../layers/BreakPipeLayer';
+import { EPLabelsLayer } from '../layers/EPLabelsLayer';
+import { breakPipeAtPoint, insertSupportAtPipe } from '../../engine/GapFixEngine';
+
 // ----------------------------------------------------
 // Colour & geometry helpers per component type
 // ----------------------------------------------------
@@ -69,11 +83,21 @@ const InstancedPipes = () => {
 
   const [selectedGeom, setSelectedGeom] = useState(null);
 
+  const canvasMode = useStore(state => state.canvasMode);
+  const multiSelectedIds = useStore(state => state.multiSelectedIds);
+  const toggleMultiSelect = useStore(state => state.toggleMultiSelect);
+
   const handlePointerDown = (e) => {
       e.stopPropagation();
       const instanceId = e.instanceId;
       if (instanceId !== undefined && pipes[instanceId]) {
           const pipe = pipes[instanceId];
+
+          if (canvasMode === 'BREAK') {
+              window.dispatchEvent(new CustomEvent('canvas-break-pipe', { detail: { pipeRow: pipe, point: e.point } }));
+              return;
+          }
+
           if (pipe.ep1 && pipe.ep2) {
               const midX = (pipe.ep1.x + pipe.ep2.x) / 2;
               const midY = (pipe.ep1.y + pipe.ep2.y) / 2;
@@ -88,23 +112,52 @@ const InstancedPipes = () => {
 
               setSelectedGeom({ pos: [midX, midY, midZ], dist: distance, radius, quat: quaternion });
 
-              useStore.getState().setSelected(pipe._rowIndex);
+              if (e.shiftKey) {
+                  toggleMultiSelect(pipe._rowIndex);
+              } else {
+                  useStore.getState().setSelected(pipe._rowIndex);
+                  if (canvasMode === 'INSERT_SUPPORT') {
+                      window.dispatchEvent(new CustomEvent('canvas-insert-support', { detail: { pipeRow: pipe, point: e.point } }));
+                  }
+              }
 
               window.dispatchEvent(new CustomEvent('canvas-focus-point', { detail: { x: midX, y: midY, z: midZ, dist: distance } }));
           }
       }
   };
 
+  const setHovered = useStore(state => state.setHovered);
+
   const handlePointerMissed = () => {
+      if (canvasMode !== 'VIEW') return;
       setSelectedGeom(null);
       useStore.getState().setSelected(null);
+      useStore.getState().clearMultiSelect();
   };
 
   if (pipes.length === 0) return null;
 
   return (
     <group onPointerMissed={handlePointerMissed}>
-        <instancedMesh ref={meshRef} args={[null, null, pipes.length]} onPointerDown={handlePointerDown}>
+        <instancedMesh
+            ref={meshRef}
+            args={[null, null, pipes.length]}
+            onPointerDown={handlePointerDown}
+            onPointerMove={(e) => {
+                if (e.instanceId !== undefined && pipes[e.instanceId]) {
+                    setHovered(pipes[e.instanceId]._rowIndex);
+                    if (canvasMode === 'BREAK') {
+                        window.dispatchEvent(new CustomEvent('canvas-break-hover', { detail: { point: e.point } }));
+                    }
+                }
+            }}
+            onPointerOut={() => {
+                setHovered(null);
+                if (canvasMode === 'BREAK') {
+                    window.dispatchEvent(new CustomEvent('canvas-break-hover', { detail: null }));
+                }
+            }}
+        >
           <cylinderGeometry args={[1, 1, 1, 16]} />
           <meshStandardMaterial color="#3b82f6" />
         </instancedMesh>
@@ -116,6 +169,27 @@ const InstancedPipes = () => {
                  <meshBasicMaterial color="#eab308" wireframe={true} />
              </mesh>
         )}
+
+        {/* Multi-select Overlays */}
+        {multiSelectedIds.map(id => {
+            const pipe = pipes.find(p => p._rowIndex === id);
+            if (!pipe || !pipe.ep1 || !pipe.ep2) return null;
+            const midX = (pipe.ep1.x + pipe.ep2.x) / 2;
+            const midY = (pipe.ep1.y + pipe.ep2.y) / 2;
+            const midZ = (pipe.ep1.z + pipe.ep2.z) / 2;
+            const vecA = new THREE.Vector3(pipe.ep1.x, pipe.ep1.y, pipe.ep1.z);
+            const vecB = new THREE.Vector3(pipe.ep2.x, pipe.ep2.y, pipe.ep2.z);
+            const distance = vecA.distanceTo(vecB);
+            const radius = pipe.bore ? pipe.bore / 2 : 5;
+            const direction = vecB.clone().sub(vecA).normalize();
+            const quaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
+            return (
+                <mesh key={`ms-${id}`} position={[midX, midY, midZ]} quaternion={quaternion}>
+                    <cylinderGeometry args={[radius * 1.5, radius * 1.5, distance, 16]} />
+                    <meshBasicMaterial color="#3b82f6" wireframe={true} />
+                </mesh>
+            );
+        })}
     </group>
   );
 };
@@ -269,6 +343,8 @@ const DraggableComponents = ({ snapResolution, onDragCommit, orbitRef }) => {
     gl.domElement.setPointerCapture(e.pointerId);
   }, [camera, gl, dragPlane, orbitRef]);
 
+  const dragAxisLock = useStore(state => state.dragAxisLock);
+
   const handlePointerMove = useCallback((e) => {
     if (!dragState) return;
     const rect = gl.domElement.getBoundingClientRect();
@@ -278,10 +354,20 @@ const DraggableComponents = ({ snapResolution, onDragCommit, orbitRef }) => {
     ray.set(camera.position, ndc.sub(camera.position).normalize());
     const intersect = new THREE.Vector3();
     if (!ray.intersectPlane(dragPlane, intersect)) return;
+
     const rawDelta = intersect.clone().sub(dragState.hitPoint);
     const snapped = new THREE.Vector3(snapV(rawDelta.x), snapV(rawDelta.y), snapV(rawDelta.z));
+
+    if (dragAxisLock) {
+        if (dragAxisLock !== 'X') snapped.x = 0;
+        if (dragAxisLock !== 'Y') snapped.y = 0;
+        if (dragAxisLock !== 'Z') snapped.z = 0;
+    }
+
     setDragState(prev => prev ? { ...prev, delta: snapped } : null);
-  }, [dragState, camera, gl, dragPlane, ray, snapV]);
+  }, [dragState, camera, gl, dragPlane, ray, snapV, dragAxisLock]);
+
+  const setDragAxisLock = useStore(state => state.setDragAxisLock);
 
   const handlePointerUp = useCallback((e) => {
     if (!dragState) return;
@@ -294,9 +380,10 @@ const DraggableComponents = ({ snapResolution, onDragCommit, orbitRef }) => {
       cp:  applyDelta(original.cp),
       bp:  applyDelta(original.bp),
     });
+    setDragAxisLock(null); // Clear lock on drop
     setDragState(null);
     gl.domElement.releasePointerCapture(e.pointerId);
-  }, [dragState, onDragCommit, gl, orbitRef]);
+  }, [dragState, onDragCommit, gl, orbitRef, setDragAxisLock]);
 
   if (elements.length === 0) return null;
 
@@ -320,16 +407,42 @@ const DraggableComponents = ({ snapResolution, onDragCommit, orbitRef }) => {
         const r    = (el.bore ? el.bore / 2 : 5) * 1.6;
         const color = isDragging ? '#fbbf24' : typeColor(el.type);
 
+        const isSelected = multiSelectedIds.includes(el._rowIndex);
+
         return (
-          <mesh
-            key={`drag-${el._rowIndex}`}
-            position={mid}
-            quaternion={quat}
-            onPointerDown={(e) => handlePointerDown(e, el)}
-          >
-            <cylinderGeometry args={[r, r, dist, 16]} />
-            <meshBasicMaterial color={color} wireframe opacity={isDragging ? 1 : 0.5} transparent />
-          </mesh>
+          <group key={`drag-${el._rowIndex}`}>
+            <mesh
+              position={mid}
+              quaternion={quat}
+              onPointerDown={(e) => {
+                  if (e.shiftKey) {
+                      e.stopPropagation();
+                      useStore.getState().toggleMultiSelect(el._rowIndex);
+                  } else {
+                      handlePointerDown(e, el);
+                  }
+              }}
+            >
+              <cylinderGeometry args={[r, r, dist, 16]} />
+              <meshBasicMaterial color={color} wireframe opacity={isDragging ? 1 : 0.5} transparent />
+            </mesh>
+            {isSelected && !isDragging && (
+                <mesh position={mid} quaternion={quat}>
+                    <cylinderGeometry args={[r * 1.5, r * 1.5, dist, 16]} />
+                    <meshBasicMaterial color="#3b82f6" wireframe={true} />
+                </mesh>
+            )}
+            {isDragging && dragAxisLock && (
+               <Line
+                   points={[
+                       [dragState.hitPoint.x - (dragAxisLock === 'X' ? 10000 : 0), dragState.hitPoint.y - (dragAxisLock === 'Y' ? 10000 : 0), dragState.hitPoint.z - (dragAxisLock === 'Z' ? 10000 : 0)],
+                       [dragState.hitPoint.x + (dragAxisLock === 'X' ? 10000 : 0), dragState.hitPoint.y + (dragAxisLock === 'Y' ? 10000 : 0), dragState.hitPoint.z + (dragAxisLock === 'Z' ? 10000 : 0)]
+                   ]}
+                   color={dragAxisLock === 'X' ? 'red' : dragAxisLock === 'Y' ? 'green' : 'blue'}
+                   lineWidth={3}
+               />
+            )}
+          </group>
         );
       })}
     </group>
@@ -801,6 +914,95 @@ export function CanvasTab() {
       window.dispatchEvent(new CustomEvent('canvas-auto-center'));
   };
 
+  const canvasMode = useStore(state => state.canvasMode);
+  const setCanvasMode = useStore(state => state.setCanvasMode);
+  const selectedElementId = useStore(state => state.selectedElementId);
+  const setSelected = useStore(state => state.setSelected);
+  const multiSelectedIds = useStore(state => state.multiSelectedIds);
+  const deleteElements = useStore(state => state.deleteElements);
+  const clearMultiSelect = useStore(state => state.clearMultiSelect);
+  const setDragAxisLock = useStore(state => state.setDragAxisLock);
+  const pushHistory = useStore(state => state.pushHistory);
+  const undo = useStore(state => state.undo);
+  const measurePts = useStore(state => state.measurePts);
+  const clearMeasure = useStore(state => state.clearMeasure);
+
+  // Keyboard Event Handler
+  useEffect(() => {
+      const handleKeyDown = (e) => {
+          if (document.activeElement.tagName === 'INPUT') return;
+
+          switch(e.key.toLowerCase()) {
+              case 'escape':
+                  setCanvasMode('VIEW');
+                  setSelected(null);
+                  clearMultiSelect();
+                  clearMeasure();
+                  break;
+              case 'c': setCanvasMode(canvasMode === 'CONNECT' ? 'VIEW' : 'CONNECT'); break;
+              case 'b': setCanvasMode(canvasMode === 'BREAK' ? 'VIEW' : 'BREAK'); break;
+              case 'm': setCanvasMode(canvasMode === 'MEASURE' ? 'VIEW' : 'MEASURE'); break;
+              case 's': setCanvasMode(canvasMode === 'INSERT_SUPPORT' ? 'VIEW' : 'INSERT_SUPPORT'); break;
+              case 'delete':
+              case 'backspace':
+                  if (multiSelectedIds.length > 0) {
+                      if (window.confirm(`Delete ${multiSelectedIds.length} elements?`)) {
+                          pushHistory('Delete Elements');
+                          dispatch({ type: 'DELETE_ELEMENTS', payload: { rowIndices: multiSelectedIds } });
+                          deleteElements(multiSelectedIds);
+                          clearMultiSelect();
+                      }
+                  } else if (selectedElementId) {
+                      if (window.confirm(`Delete row ${selectedElementId}?`)) {
+                          pushHistory('Delete Element');
+                          dispatch({ type: 'DELETE_ELEMENTS', payload: { rowIndices: [selectedElementId] } });
+                          setSelected(null);
+                      }
+                  }
+                  break;
+              case 'x':
+              case 'y':
+                  if (dragMode) setDragAxisLock(e.key.toUpperCase());
+                  break;
+              case 'z':
+                  // Handle Ctrl+Z vs plain z for axis lock
+                  if (e.ctrlKey || e.metaKey) {
+                      undo();
+                      setDragAxisLock(null); // Prevent locking Z accidentally on undo
+                  } else if (dragMode) {
+                      setDragAxisLock('Z');
+                  }
+                  break;
+              case 'f':
+                  // Frame selected element
+                  if (selectedElementId) {
+                      const el = appState.stage2Data.find(r => r._rowIndex === selectedElementId);
+                      if (el && el.ep1 && el.ep2) {
+                          const midX = (el.ep1.x + el.ep2.x) / 2;
+                          const midY = (el.ep1.y + el.ep2.y) / 2;
+                          const midZ = (el.ep1.z + el.ep2.z) / 2;
+                          const dist = distance(el.ep1, el.ep2);
+                          window.dispatchEvent(new CustomEvent('canvas-focus-point', { detail: { x: midX, y: midY, z: midZ, dist } }));
+                      }
+                  }
+                  break;
+          }
+      };
+
+      const handleKeyUp = (e) => {
+          if (['x', 'y', 'z'].includes(e.key.toLowerCase())) {
+              setDragAxisLock(null);
+          }
+      };
+
+      window.addEventListener('keydown', handleKeyDown);
+      window.addEventListener('keyup', handleKeyUp);
+      return () => {
+          window.removeEventListener('keydown', handleKeyDown);
+          window.removeEventListener('keyup', handleKeyUp);
+      };
+  }, [canvasMode, selectedElementId, multiSelectedIds, appState.stage2Data, dispatch, setCanvasMode, setSelected, clearMultiSelect, deleteElements, setDragAxisLock, pushHistory, undo, dragMode]);
+
   const handleApprove = (e, prop) => {
       e.stopPropagation();
 
@@ -862,35 +1064,156 @@ export function CanvasTab() {
   };
 
 
+  const handleConnect = (rowIndex, fromEP, targetPos) => {
+      pushHistory('Connect Element');
+      const updatedTable = appState.stage2Data.map(r => {
+          if (r._rowIndex === rowIndex) {
+              return { ...r, [fromEP]: { ...targetPos } };
+          }
+          return r;
+      });
+      dispatch({ type: 'SET_STAGE_2_DATA', payload: updatedTable });
+      dispatch({ type: 'ADD_LOG', payload: { type: 'Info', stage: 'CONNECT', message: `Row ${rowIndex} connected manually via snap layer.` }});
+      useStore.getState().setDataTable(updatedTable);
+      setCanvasMode('VIEW');
+  };
+
+  useEffect(() => {
+      const handleBreakPipe = (e) => {
+          const { pipeRow, point } = e.detail;
+
+          const breakResult = breakPipeAtPoint(pipeRow, point);
+          if (breakResult.length === 1) {
+              // Pipe was too short to break, bail out to avoid crashing
+              dispatch({ type: 'ADD_LOG', payload: { type: 'Warning', stage: 'BREAK', message: `Pipe Row ${pipeRow._rowIndex} is too short to break.` }});
+              setCanvasMode('VIEW');
+              return;
+          }
+
+          pushHistory('Break Pipe');
+          const [rowA, rowB] = breakResult;
+          dispatch({ type: 'BREAK_PIPE', payload: { rowIndex: pipeRow._rowIndex, rowA, rowB } });
+          dispatch({ type: 'ADD_LOG', payload: { type: 'Info', stage: 'BREAK', message: `Pipe Row ${pipeRow._rowIndex} broken at (${point.x.toFixed(1)}, ${point.y.toFixed(1)}, ${point.z.toFixed(1)}).` }});
+
+          // Update Zustand
+          const state = appState.stage2Data;
+          let newTable = [];
+          state.forEach(r => {
+              if (r._rowIndex === pipeRow._rowIndex) {
+                  newTable.push(rowA, rowB);
+              } else {
+                  newTable.push(r);
+              }
+          });
+          const reindexed = newTable.map((r, i) => ({ ...r, _rowIndex: i + 1 }));
+          useStore.getState().setDataTable(reindexed);
+          setCanvasMode('VIEW'); // auto return to view mode after break
+      };
+      window.addEventListener('canvas-break-pipe', handleBreakPipe);
+      return () => window.removeEventListener('canvas-break-pipe', handleBreakPipe);
+  }, [appState.stage2Data, dispatch, setCanvasMode, pushHistory]);
+
+  useEffect(() => {
+      const handleInsertSupport = (e) => {
+          const { pipeRow, point } = e.detail;
+          const attrs = { CA1: pipeRow.CA1, CA2: pipeRow.CA2, CA3: pipeRow.CA3 };
+
+          const supportRow = insertSupportAtPipe(pipeRow, point, attrs);
+          dispatch({ type: 'INSERT_SUPPORT', payload: { rowIndex: pipeRow._rowIndex, supportRow } });
+          dispatch({ type: 'ADD_LOG', payload: { type: 'Info', stage: 'SUPPORT', message: `Support inserted on Row ${pipeRow._rowIndex} at (${point.x.toFixed(1)}, ${point.y.toFixed(1)}, ${point.z.toFixed(1)}).` }});
+
+          // Update Zustand
+          const state = appState.stage2Data;
+          let newTable = [];
+          state.forEach(r => {
+              newTable.push(r);
+              if (r._rowIndex === pipeRow._rowIndex && supportRow) {
+                  newTable.push(supportRow);
+              }
+          });
+          const reindexed = newTable.map((r, i) => ({ ...r, _rowIndex: i + 1 }));
+          useStore.getState().setDataTable(reindexed);
+
+          setCanvasMode('VIEW');
+      };
+      window.addEventListener('canvas-insert-support', handleInsertSupport);
+      return () => window.removeEventListener('canvas-insert-support', handleInsertSupport);
+  }, [appState.stage2Data, dispatch, setCanvasMode]);
+
+  useEffect(() => {
+      // Session camera restore
+      try {
+          const saved = sessionStorage.getItem('pcf-canvas-session');
+          if (saved) {
+              const parsed = JSON.parse(saved);
+              if (parsed.showGapRadar !== undefined) useStore.getState().setShowGapRadar(parsed.showGapRadar);
+              if (parsed.showEPLabels !== undefined) useStore.getState().setShowEPLabels(parsed.showEPLabels);
+              if (parsed.dragMode !== undefined) setDragMode(parsed.dragMode);
+
+              if (parsed.cameraPos) window.dispatchEvent(new CustomEvent('canvas-restore-camera', { detail: parsed }));
+          }
+      } catch (e) { console.warn("Failed to restore session state", e); }
+
+      return () => {
+          // Unmount logic to save session state is handled inside the Canvas via a utility component.
+      };
+  }, []);
+
+  const SessionSaver = () => {
+      const { camera } = useThree();
+      const showGapRadar = useStore(state => state.showGapRadar);
+      const showEPLabels = useStore(state => state.showEPLabels);
+
+      useEffect(() => {
+          return () => {
+              // Save state on unmount
+              const target = dragOrbitRef.current?.target;
+              sessionStorage.setItem('pcf-canvas-session', JSON.stringify({
+                  showGapRadar,
+                  showEPLabels,
+                  dragMode,
+                  cameraPos: camera.position.toArray(),
+                  targetPos: target ? target.toArray() : null
+              }));
+          };
+      }, [camera, showGapRadar, showEPLabels, dragMode]);
+
+      useEffect(() => {
+          const handleRestore = (e) => {
+              const { cameraPos, targetPos } = e.detail;
+              if (cameraPos) camera.position.fromArray(cameraPos);
+              if (targetPos && dragOrbitRef.current) dragOrbitRef.current.target.fromArray(targetPos);
+          };
+          window.addEventListener('canvas-restore-camera', handleRestore);
+          return () => window.removeEventListener('canvas-restore-camera', handleRestore);
+      }, [camera]);
+
+      return null;
+  };
+
   return (
     <div className="flex flex-col h-[calc(100vh-12rem)] w-full overflow-hidden bg-slate-950 rounded-lg border border-slate-800 shadow-inner relative">
 
       {/* Canvas Overlay UI */}
+      <SceneHealthHUD />
+      <HoverTooltip />
+      <SideInspector />
+      <CanvasToolbar
+          onUndo={undo}
+          dragMode={dragMode}
+          setDragMode={setDragMode}
+          snapResolution={snapResolution}
+          handleAutoCenter={handleAutoCenter}
+      />
+      <LogDrawer />
+      <SupportPropertyPanel />
+      <MeasurePanelOverlay />
+
       <div className="absolute top-4 left-4 z-10 pointer-events-none">
         <h2 className="text-slate-200 font-bold text-lg drop-shadow-md">3D Topology Canvas</h2>
         <p className="text-slate-400 text-xs mt-1">Note: Visualization reflects data from Stage 2.</p>
         <p className="text-slate-500 text-[10px] mt-0.5">Left-click element to focus/orbit, Right-click pan, Scroll zoom.</p>
       </div>
-
-      <div className="absolute top-4 right-4 z-10 flex flex-col gap-2 items-end">
-        <button
-            onClick={handleAutoCenter}
-            className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded border border-slate-700 shadow flex items-center gap-2 text-sm transition-colors"
-            title="Auto Center Camera"
-        >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3h6"/><path d="M3 3v6"/><path d="M21 3h-6"/><path d="M21 3v6"/><path d="M3 21h6"/><path d="M3 21v-6"/><path d="M21 21h-6"/><path d="M21 21v-6"/></svg>
-            Auto Center
-        </button>
-        <button
-            onClick={() => setDragMode(m => !m)}
-            className={`px-3 py-1.5 rounded border shadow flex items-center gap-2 text-sm transition-colors ${dragMode ? 'bg-amber-500 hover:bg-amber-400 text-white border-amber-600' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'}`}
-            title={dragMode ? "Exit Drag Edit Mode" : "Enter Drag Edit Mode (snap-to-grid)"}
-        >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 9l-3 3 3 3"/><path d="M9 5l3-3 3 3"/><path d="M15 19l-3 3-3-3"/><path d="M19 9l3 3-3 3"/><path d="M2 12h20"/><path d="M12 2v20"/></svg>
-            {dragMode ? `Drag ON (${snapResolution}mm snap)` : "Drag Edit"}
-        </button>
-      </div>
-
 
       <SingleIssuePanel
           proposals={proposals}
@@ -953,8 +1276,14 @@ export function CanvasTab() {
             return <IssueMapPin activeIssue={allIssues[safeIndex]} />;
         })()}
 
+        <EndpointSnapLayer onConnect={handleConnect} />
+        <GapRadarLayer />
+        <MeasureTool />
+        <BreakPipeLayer />
+        <EPLabelsLayer />
 
         <ControlsAutoCenter externalRef={dragOrbitRef} />
+        <SessionSaver />
 
         {/* World Reference */}
         <gridHelper args={[20000, 20, '#1e293b', '#0f172a']} position={[0, -1000, 0]} />
