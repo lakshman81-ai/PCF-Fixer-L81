@@ -43,9 +43,69 @@ export const useStore = create((set, get) => ({
 
   setProposals: (proposals) => set({ proposals }),
 
+// History stack for Undo
+history: [],
+historyIdx: 0,
+pushHistory: (label) => set((state) => {
+    // Keep last 20 snapshots
+    const newHistory = [...state.history.slice(0, state.historyIdx), { label, dataTable: state.dataTable }];
+    if (newHistory.length > 20) newHistory.shift();
+    return { history: newHistory, historyIdx: newHistory.length };
+}),
+undo: () => {
+    set((state) => {
+        if (state.historyIdx === 0) return state; // Nothing to undo
+        const prevIdx = state.historyIdx - 1;
+        const prevSnapshot = state.history[prevIdx];
+
+        // Dispatch the event OUTSIDE the state update cycle using setTimeout
+        setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('zustand-undo'));
+        }, 0);
+
+        return { dataTable: prevSnapshot.dataTable, historyIdx: prevIdx };
+    });
+},
+
   // Interaction handlers
   setSelected: (id) => set({ selectedElementId: id }),
   setHovered: (id) => set({ hoveredElementId: id }),
+
+// Canvas Modes & Interactions
+canvasMode: 'VIEW', // 'VIEW' | 'CONNECT' | 'BREAK' | 'INSERT_SUPPORT' | 'MEASURE'
+setCanvasMode: (mode) => set({ canvasMode: mode }),
+
+multiSelectedIds: [],
+toggleMultiSelect: (id) => set((state) => ({
+    multiSelectedIds: state.multiSelectedIds.includes(id)
+        ? state.multiSelectedIds.filter(i => i !== id)
+        : [...state.multiSelectedIds, id]
+})),
+clearMultiSelect: () => set({ multiSelectedIds: [] }),
+deleteElements: (ids) => set((state) => {
+    // Delete geometry immediately from Zustand to sync 3D View instantly
+    const newTable = state.dataTable.filter(row => !ids.includes(row._rowIndex));
+    const reindexed = newTable.map((r, i) => ({ ...r, _rowIndex: i + 1 }));
+    return {
+        dataTable: reindexed,
+        multiSelectedIds: [] // Clear selection on delete
+    };
+}),
+
+dragAxisLock: null, // 'X' | 'Y' | 'Z' | null
+setDragAxisLock: (axis) => set({ dragAxisLock: axis }),
+
+showEPLabels: false,
+setShowEPLabels: (val) => set({ showEPLabels: val }),
+
+showGapRadar: false,
+setShowGapRadar: (val) => set({ showGapRadar: val }),
+
+measurePts: [],
+addMeasurePt: (pt) => set((state) => ({
+    measurePts: state.measurePts.length < 2 ? [...state.measurePts, pt] : [pt]
+})),
+clearMeasure: () => set({ measurePts: [] }),
 
   // A helper method that safely retrieves pipes only
   getPipes: () => get().dataTable.filter(r => (r.type || "").toUpperCase() === 'PIPE'),
