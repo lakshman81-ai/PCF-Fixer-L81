@@ -45,23 +45,37 @@ export function fix6mmGaps(dataTable) {
                     // Move A's ep2 to B's ep1
                     rowA.ep2 = { ...rowB.ep1 };
                     fixLog.push({
-                        type: 'Fix',
-                        stage: 'GapFixEngine',
-                        message: `Pass ${pass}: Snapped Row ${rowA._rowIndex} (ep2) to Row ${rowB._rowIndex} (ep1). Gap: ${dist.toFixed(2)}mm`
+                        type: 'APPLIED/FIX',
+                        stage: '[GAP_FIX_6MM]',
+                        message: `Row ${rowA._rowIndex}: Extended ep2 to close ${dist.toFixed(1)}mm gap.`
                     });
                 } else {
                     // Move B's ep1 to A's ep2
                     rowB.ep1 = { ...rowA.ep2 };
                     fixLog.push({
-                        type: 'Fix',
-                        stage: 'GapFixEngine',
-                        message: `Pass ${pass}: Snapped Row ${rowB._rowIndex} (ep1) to Row ${rowA._rowIndex} (ep2). Gap: ${dist.toFixed(2)}mm`
+                        type: 'APPLIED/FIX',
+                        stage: '[GAP_FIX_6MM]',
+                        message: `Row ${rowB._rowIndex}: Extended ep1 to close ${dist.toFixed(1)}mm gap.`
                     });
                 }
                 fixesInPass++;
             }
         }
         if (fixesInPass === 0) break; // Optimization: bail early if pass 1 fixed everything
+    }
+
+    if (fixLog.length === 0) {
+        fixLog.push({
+            type: 'INFO',
+            stage: '[GAP_FIX_6MM]',
+            message: 'No gaps ≤ 6mm found.'
+        });
+    } else {
+        fixLog.push({
+            type: 'INFO',
+            stage: '[FIXING]',
+            message: "Skipping Pass 2: Awaiting User to Trigger 'Run Second Pass'"
+        });
     }
 
     return { updatedTable: currentTable, fixLog };
@@ -104,20 +118,28 @@ export function fix25mmGapsWithPipe(dataTable, refPrefix = 'GAPFIX') {
                 insertCount++;
 
                 fixLog.push({
-                    type: 'Fix',
-                    stage: 'GapFixEngine',
-                    message: `Inserted new PIPE between Row ${rowA._rowIndex} and Row ${rowB._rowIndex}. Gap: ${dist.toFixed(2)}mm`
+                    type: 'APPLIED/FIX',
+                    stage: '[GAP_FIX_25MM]',
+                    message: `Inserted Pipe between Row ${rowA._rowIndex} & ${rowB._rowIndex} (${dist.toFixed(1)}mm gap).`
                 });
 
                 if (insertCount > 5) {
                      fixLog.push({
-                         type: 'Warning',
-                         stage: 'GapFixEngine',
+                         type: 'WARNING',
+                         stage: '[GAP_FIX_25MM]',
                          message: `High number of gap-pipes inserted (>5). Check data quality.`
                      });
                 }
             }
         }
+    }
+
+    if (fixLog.length === 0) {
+        fixLog.push({
+            type: 'INFO',
+            stage: '[GAP_FIX_25MM]',
+            message: 'No gaps 6-25mm found.'
+        });
     }
 
     // Re-index
