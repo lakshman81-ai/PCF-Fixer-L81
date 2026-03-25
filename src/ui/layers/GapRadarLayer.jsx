@@ -44,18 +44,24 @@ export function GapRadarLayer() {
                         <Line
                             points={[gap.pt1, gap.pt2]}
                             color={color}
-                            lineWidth={4}
+                            lineWidth={10}
                             dashed
-                            dashSize={gap.dist / 5}
-                            gapSize={gap.dist / 5}
+                            dashSize={gap.dist / 3}
+                            gapSize={gap.dist / 3}
+                            depthTest={false}
                         />
+                        <mesh position={mid}>
+                            <sphereGeometry args={[gap.dist / 2 + 10, 16, 16]} />
+                            <meshBasicMaterial color={color} transparent opacity={0.3} depthTest={false} />
+                        </mesh>
                         <Text
-                            position={[mid.x, mid.y + 10, mid.z]}
+                            position={[mid.x, mid.y + 15, mid.z]}
                             color={color}
-                            fontSize={20}
-                            outlineWidth={2}
+                            fontSize={25}
+                            outlineWidth={3}
                             outlineColor="#000"
                             fontWeight="bold"
+                            depthTest={false}
                         >
                             {gap.dist.toFixed(1)}mm
                         </Text>

@@ -33,17 +33,38 @@ const TYPE_CONFIG = {
   OLET:   { color: '#06b6d4' },  // cyan
   SUPPORT:{ color: '#94a3b8' },  // slate
 };
-const typeColor = (type) => (TYPE_CONFIG[(type||'').toUpperCase()] || { color: '#64748b' }).color;
+
+// Generate deterministic colors for CA values
+const hashCode = (str) => {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    return hash;
+};
+const intToRGB = (i) => {
+    const c = (i & 0x00FFFFFF).toString(16).toUpperCase();
+    return '#' + '00000'.substring(0, 6 - c.length) + c;
+};
+
+const getColorForElement = (el, colorByCA) => {
+    if (colorByCA && el[colorByCA]) {
+        return intToRGB(hashCode(el[colorByCA]));
+    }
+    return (TYPE_CONFIG[(el.type||'').toUpperCase()] || { color: '#64748b' }).color;
+};
 
 // ----------------------------------------------------
 // Performance Optimized Instanced Pipes Rendering
 // ----------------------------------------------------
 const InstancedPipes = () => {
   const getPipes = useStore(state => state.getPipes);
+  const colorByCA = useStore(state => state.colorByCA);
   const pipes = getPipes();
   const meshRef = useRef();
 
   const dummy = useMemo(() => new THREE.Object3D(), []);
+  const colorObj = useMemo(() => new THREE.Color(), []);
 
   useEffect(() => {
     if (!meshRef.current || pipes.length === 0) return;
@@ -75,11 +96,16 @@ const InstancedPipes = () => {
 
       dummy.updateMatrix();
       meshRef.current.setMatrixAt(i, dummy.matrix);
+
+      const elColor = getColorForElement(element, colorByCA);
+      colorObj.set(elColor);
+      meshRef.current.setColorAt(i, colorObj);
     });
 
     meshRef.current.instanceMatrix.needsUpdate = true;
+    if (meshRef.current.instanceColor) meshRef.current.instanceColor.needsUpdate = true;
     meshRef.current.computeBoundingSphere();
-  }, [pipes, dummy]);
+  }, [pipes, dummy, colorByCA, colorObj]);
 
   const [selectedGeom, setSelectedGeom] = useState(null);
 
@@ -120,8 +146,6 @@ const InstancedPipes = () => {
                       window.dispatchEvent(new CustomEvent('canvas-insert-support', { detail: { pipeRow: pipe, point: e.point } }));
                   }
               }
-
-              window.dispatchEvent(new CustomEvent('canvas-focus-point', { detail: { x: midX, y: midY, z: midZ, dist: distance } }));
           }
       }
   };
@@ -200,13 +224,15 @@ const InstancedPipes = () => {
 const ImmutableComponents = () => {
   const getImmutables = useStore(state => state.getImmutables);
   const elements = getImmutables();
+  const hiddenElementIds = useStore(state => state.hiddenElementIds || []);
+  const colorByCA = useStore(state => state.colorByCA);
 
   if (elements.length === 0) return null;
 
   return (
     <group>
       {elements.map((el, i) => {
-        if (!el.ep1 || !el.ep2) return null;
+        if (!el.ep1 || !el.ep2 || hiddenElementIds.includes(el._rowIndex)) return null;
 
         const vecA = new THREE.Vector3(el.ep1.x, el.ep1.y, el.ep1.z);
         const vecB = new THREE.Vector3(el.ep2.x, el.ep2.y, el.ep2.z);
@@ -218,7 +244,7 @@ const ImmutableComponents = () => {
         const up  = new THREE.Vector3(0, 1, 0);
         const quat = new THREE.Quaternion().setFromUnitVectors(up, dir);
         const r = el.bore ? el.bore / 2 : 5;
-        const color = typeColor(el.type);
+        const color = getColorForElement(el, colorByCA);
         const type = (el.type || '').toUpperCase();
 
         if (type === 'FLANGE') {
@@ -316,6 +342,9 @@ const DraggableComponents = ({ snapResolution, onDragCommit, orbitRef }) => {
   const { camera, gl } = useThree();
   const getAllDraggable = useStore(state => state.getAllDraggable);
   const elements = getAllDraggable();
+  const hiddenElementIds = useStore(state => state.hiddenElementIds || []);
+  const multiSelectedIds = useStore(state => state.multiSelectedIds);
+  const colorByCA = useStore(state => state.colorByCA);
 
   const [dragState, setDragState] = useState(null);
   const dragPlane = useMemo(() => new THREE.Plane(), []);
@@ -405,7 +434,7 @@ const DraggableComponents = ({ snapResolution, onDragCommit, orbitRef }) => {
         const dir  = ep2.clone().sub(ep1).normalize();
         const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
         const r    = (el.bore ? el.bore / 2 : 5) * 1.6;
-        const color = isDragging ? '#fbbf24' : typeColor(el.type);
+        const color = isDragging ? '#fbbf24' : getColorForElement(el, colorByCA);
 
         const isSelected = multiSelectedIds.includes(el._rowIndex);
 
@@ -1065,16 +1094,36 @@ export function CanvasTab() {
 
 
   const handleConnect = (rowIndex, fromEP, targetPos) => {
-      pushHistory('Connect Element');
-      const updatedTable = appState.stage2Data.map(r => {
+      pushHistory('Connect Element via Bridge');
+
+      const sourceRow = appState.stage2Data.find(r => r._rowIndex === rowIndex);
+      if (!sourceRow) return;
+
+      const newPipe = {
+          type: 'PIPE',
+          ep1: { ...sourceRow[fromEP] },
+          ep2: { ...targetPos },
+          bore: sourceRow.bore || 100,
+          skey: sourceRow.skey || 'PIPE',
+          pipelineRef: (sourceRow.pipelineRef || 'PIPE') + '_3DTopoBridge',
+          CA1: sourceRow.CA1 || '',
+          CA2: sourceRow.CA2 || '',
+          CA3: sourceRow.CA3 || ''
+      };
+
+      const newTable = [];
+      appState.stage2Data.forEach(r => {
+          newTable.push(r);
           if (r._rowIndex === rowIndex) {
-              return { ...r, [fromEP]: { ...targetPos } };
+              newTable.push(newPipe);
           }
-          return r;
       });
-      dispatch({ type: 'SET_STAGE_2_DATA', payload: updatedTable });
-      dispatch({ type: 'ADD_LOG', payload: { type: 'Info', stage: 'CONNECT', message: `Row ${rowIndex} connected manually via snap layer.` }});
-      useStore.getState().setDataTable(updatedTable);
+
+      const reindexed = newTable.map((r, i) => ({ ...r, _rowIndex: i + 1 }));
+
+      dispatch({ type: 'SET_STAGE_2_DATA', payload: reindexed });
+      dispatch({ type: 'ADD_LOG', payload: { type: 'APPLIED/FIX', stage: '[CONNECT]', message: `Bridged Row ${rowIndex} to target via new pipe.` }});
+      useStore.getState().setDataTable(reindexed);
       setCanvasMode('VIEW');
   };
 

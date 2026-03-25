@@ -34,9 +34,11 @@ export function LogDrawer() {
                   <span className="text-xs text-slate-200 font-bold tracking-widest">{expanded ? '▼' : '▲'} 3D TOPO LOG</span>
                   <span className="bg-slate-700/80 text-slate-200 text-[10px] px-2 py-0.5 rounded-full font-bold">{state.log.length}</span>
                   {!expanded && state.log.length > 0 && (
-                      <span className={`text-xs ${getColor(state.log[state.log.length-1].type.toUpperCase())} truncate max-w-lg ml-4`}>
-                          {state.log[state.log.length-1].message}
-                      </span>
+                      <div className="flex items-center gap-4 ml-8 font-bold text-xs tracking-wider">
+                          <span className="text-slate-500 w-[110px] truncate">{state.log[state.log.length-1].stage || 'SYS'}</span>
+                          <span className={`${getColor(state.log[state.log.length-1].type.toUpperCase())} w-[90px]`}>{state.log[state.log.length-1].type}</span>
+                          <span className="text-slate-300 truncate max-w-xl font-normal">{state.log[state.log.length-1].message}</span>
+                      </div>
                   )}
               </div>
           </div>
