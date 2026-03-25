@@ -120,8 +120,6 @@ const InstancedPipes = () => {
                       window.dispatchEvent(new CustomEvent('canvas-insert-support', { detail: { pipeRow: pipe, point: e.point } }));
                   }
               }
-
-              window.dispatchEvent(new CustomEvent('canvas-focus-point', { detail: { x: midX, y: midY, z: midZ, dist: distance } }));
           }
       }
   };
@@ -316,6 +314,8 @@ const DraggableComponents = ({ snapResolution, onDragCommit, orbitRef }) => {
   const { camera, gl } = useThree();
   const getAllDraggable = useStore(state => state.getAllDraggable);
   const elements = getAllDraggable();
+  const hiddenElementIds = useStore(state => state.hiddenElementIds || []);
+  const multiSelectedIds = useStore(state => state.multiSelectedIds);
 
   const [dragState, setDragState] = useState(null);
   const dragPlane = useMemo(() => new THREE.Plane(), []);
