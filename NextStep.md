@@ -70,3 +70,25 @@ Engineers need to know which elements were created by the AI Editor versus the o
 3. Dragging an EP in 'Connect' mode successfully draws a new bridging pipe and logs it.
 4. The `LogDrawer` correctly expands, colors, and formats all engine feedback.
 5. The dual-state contract remains completely intact.
+
+## 🚀 Advanced Feature Roadmap (Future Enhancements)
+Once the core CAD tools and logging are stabilized, consider implementing these advanced features to elevate the application to industry-leading standards:
+
+### 1. Advanced Topological Validation & Auto-Correction
+- **Slope & Gravity Detection:** Automatically highlight pipes that violate minimum slope requirements (e.g., 1:100 fall for drainage lines) using a color-coded heatmap layer.
+- **Clash Detection:** Implement an efficient spatial hash or Octree to detect intersecting geometries (e.g., pipes passing through steel structural members or other pipes) and flag them with a "Clash" severity in the LogDrawer.
+- **Flange Face-to-Face Validation:** Automatically detect missing gaskets or bolts between connected flanges, or flag when two flanges of differing ratings/sizes are incorrectly mated.
+
+### 2. High-Precision Editing Tools
+- **Parametric Pipe Bending:** Instead of just breaking pipes, allow users to select an intersection point (e.g., a 90-degree corner) and automatically generate a `BEND` or `ELBOW` component with the correct radius based on the pipe's bore size.
+- **Multi-Element Move/Rotate:** Enhance the `DraggableComponents` to allow moving an entire selected spool (a connected run of pipes and fittings) as a single rigid body, snapping it to new connection points.
+- **Ortho-Routing Mode:** When inserting new bridging pipes, force the routing to follow orthogonal axes (X, Y, Z) to generate clean, constructible pipe runs instead of diagonal point-to-point lines.
+
+### 3. UI/UX & Visualization Upgrades
+- **Section Box / Clipping Planes:** Allow users to slice through complex 3D models using interactive clipping planes (similar to Navisworks) to inspect dense interior piping without hiding individual elements.
+- **BOM (Bill of Materials) Generation:** Add a panel that dynamically calculates and exports the total length of pipes by size, and counts of valves, flanges, and supports currently visible in the scene.
+- **Annotation & Redlining:** Implement a layer that lets engineers drop 3D text notes, arrows, or warning spheres into the model that persist into the exported PCF or project file for team review.
+
+### 4. Performance & Export Capabilities
+- **Geometry Instancing Upgrades:** While pipes are instanced, complex fittings (Valves, Tees) are rendered individually. Migrate all repetitive components to `InstancedMesh` for models exceeding 50,000 components.
+- **PCF Export Fidelity:** Ensure that every geometric edit, split, and connection faithfully translates back into valid PCF syntax, preserving ISOGEN attributes (SKEY, Spool identifiers, Item Codes) so the file remains usable in AVEVA or SmartPlant.
