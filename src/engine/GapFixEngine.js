@@ -109,7 +109,7 @@ export function fix25mmGapsWithPipe(dataTable, refPrefix = 'GAPFIX') {
                     ep2: { ...rowB.ep1 },
                     bore: rowA.bore,
                     skey: rowA.skey,
-                    pipelineRef: `${refPrefix}_25mmGapfix`,
+                    pipelineRef: (rowA.pipelineRef || 'PIPE') + '_3DTopoBridge_25mmfix',
                     CA1: rowA.CA1,
                     CA2: rowA.CA2,
                     CA3: rowA.CA3
@@ -199,7 +199,10 @@ export function breakPipeAtPoint(pipeRow, breakPoint) {
     const rowB = cloneRow(pipeRow);
 
     rowA.ep2 = { ...snapBreak };
+    rowA.pipelineRef = (pipeRow.pipelineRef || 'PIPE') + '_1';
+
     rowB.ep1 = { ...snapBreak };
+    rowB.pipelineRef = (pipeRow.pipelineRef || 'PIPE') + '_2';
 
     return [rowA, rowB];
 }
@@ -224,6 +227,7 @@ export function insertSupportAtPipe(pipeRow, position = null, attrs = {}) {
         ep1: { ...pos },
         ep2: { ...stubPos },
         bore: pipeRow.bore,
+        pipelineRef: (pipeRow.pipelineRef || 'PIPE') + '_3DTopoSupport',
         CA1: attrs.CA1 || pipeRow.CA1 || '',
         CA2: attrs.CA2 || pipeRow.CA2 || '',
         CA3: attrs.CA3 || pipeRow.CA3 || ''

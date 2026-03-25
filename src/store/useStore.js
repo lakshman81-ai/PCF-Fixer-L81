@@ -82,6 +82,13 @@ toggleMultiSelect: (id) => set((state) => ({
         : [...state.multiSelectedIds, id]
 })),
 clearMultiSelect: () => set({ multiSelectedIds: [] }),
+
+hiddenElementIds: [],
+setHiddenElementIds: (ids) => set({ hiddenElementIds: ids }),
+
+colorByCA: null,
+setColorByCA: (ca) => set({ colorByCA: ca }),
+
 deleteElements: (ids) => set((state) => {
     // Delete geometry immediately from Zustand to sync 3D View instantly
     const newTable = state.dataTable.filter(row => !ids.includes(row._rowIndex));

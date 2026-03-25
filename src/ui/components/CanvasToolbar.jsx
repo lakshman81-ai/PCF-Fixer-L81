@@ -12,6 +12,8 @@ export function CanvasToolbar({ onUndo, dragMode, setDragMode, snapResolution, h
   const setShowEPLabels = useStore(state => state.setShowEPLabels);
   const showGapRadar = useStore(state => state.showGapRadar);
   const setShowGapRadar = useStore(state => state.setShowGapRadar);
+  const colorByCA = useStore(state => state.colorByCA);
+  const setColorByCA = useStore(state => state.setColorByCA);
   const pushHistory = useStore(state => state.pushHistory);
   const dataTable = useStore(state => state.dataTable);
 
@@ -103,6 +105,24 @@ export function CanvasToolbar({ onUndo, dragMode, setDragMode, snapResolution, h
                       <div className="flex flex-col gap-1 pl-1">
                           <ToggleBtn active={showGapRadar} onClick={() => setShowGapRadar(!showGapRadar)} icon="⚡" label="Gap Radar" title="Show all gaps" />
                           <ToggleBtn active={showEPLabels} onClick={() => setShowEPLabels(!showEPLabels)} icon="•••" label="EP Labels" title="Show endpoint coordinates" />
+
+                          <div className="flex items-center gap-2 px-2 py-1.5 rounded transition text-sm bg-slate-800 border border-slate-700">
+                              <span className="w-4 text-center">🎨</span>
+                              {!collapsed && (
+                                  <select
+                                      value={colorByCA || ''}
+                                      onChange={(e) => setColorByCA(e.target.value || null)}
+                                      className="bg-slate-900 text-slate-300 text-xs outline-none border-none ml-1 w-20"
+                                      title="Color by Custom Attribute"
+                                  >
+                                      <option value="">Off (Type)</option>
+                                      {Array.from({length: 10}, (_, i) => `CA${i+1}`).map(ca => (
+                                          <option key={ca} value={ca}>{ca}</option>
+                                      ))}
+                                  </select>
+                              )}
+                          </div>
+
                           <button onClick={onUndo} className="flex items-center gap-2 px-2 py-1.5 rounded transition text-sm bg-slate-800 text-slate-300 hover:bg-slate-700" title="Undo (Ctrl+Z)">
                               <span className="w-4 text-center">↩</span>
                               {!collapsed && <span>Undo</span>}
